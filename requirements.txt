@@ -1,0 +1,21 @@
+# =============================================================================
+# requirements.txt — ResNet DDP, CUDA 12.8
+#
+# Install:
+#   pip install -r requirements.txt \
+#       --index-url https://download.pytorch.org/whl/cu128 \
+#       --extra-index-url https://pypi.org/simple
+# =============================================================================
+
+# ── PyTorch (CUDA 12.8 wheels) ────────────────────────────────────────────────
+torch==2.7.0+cu128
+torchvision==0.22.0+cu128
+torchaudio==2.7.0+cu128
+
+# ── Training utilities ────────────────────────────────────────────────────────
+tqdm>=4.66.0
+tensorboard>=2.16.0        # optional: training curve visualisation
+
+# ── Data / misc ───────────────────────────────────────────────────────────────
+numpy>=1.26.0
+Pillow>=10.3.0
