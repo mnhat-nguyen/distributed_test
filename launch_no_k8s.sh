@@ -71,13 +71,13 @@ torchrun \
 #
 # 2. Ensure nodes can reach each other:
 #      ping <MASTER_ADDR>
-#      nc -zv <MASTER_ADDR> 29500    # port must be open
+#      nc -zv <MASTER_ADDR> 20011    # port must be open
 #
 # 3. On each node, set NODE_RANK and run:
-#      Node 0:  MASTER_ADDR=10.0.0.1 NODE_RANK=0 bash launch_no_k8s.sh
-#      Node 1:  MASTER_ADDR=10.0.0.1 NODE_RANK=1 bash launch_no_k8s.sh
-#      Node 2:  MASTER_ADDR=10.0.0.1 NODE_RANK=2 bash launch_no_k8s.sh
-#      Node 3:  MASTER_ADDR=10.0.0.1 NODE_RANK=3 bash launch_no_k8s.sh
+#      Node 0:  MASTER_ADDR=192.168.0.11 NODE_RANK=0 bash launch_no_k8s.sh
+#      Node 1:  MASTER_ADDR=192.168.0.11 NODE_RANK=1 bash launch_no_k8s.sh
+#      Node 2:  MASTER_ADDR=192.168.0.11 NODE_RANK=2 bash launch_no_k8s.sh
+#      Node 3:  MASTER_ADDR=192.168.0.11 NODE_RANK=3 bash launch_no_k8s.sh
 #
 # 4. Training starts once ALL nodes have connected to the rendezvous.
 #
