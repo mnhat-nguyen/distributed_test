@@ -17,8 +17,8 @@
 set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-MASTER_ADDR="${MASTER_ADDR:-10.0.0.1}"   # IP of node 0 (all nodes must reach it)
-MASTER_PORT="${MASTER_PORT:-29500}"
+MASTER_ADDR="${MASTER_ADDR:-192.168.0.11}"   # IP of node 0 (all nodes must reach it)
+MASTER_PORT="${MASTER_PORT:-20011}"
 NNODES=4                                  # total number of nodes
 NPROC_PER_NODE=1                          # GPUs per node
 NODE_RANK="${NODE_RANK:-0}"               # 0-3, must be unique per node
