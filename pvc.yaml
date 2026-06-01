@@ -1,0 +1,40 @@
+# =============================================================================
+# k8s/pvc.yaml – Persistent Volume Claims for training data and checkpoints
+#
+# Deploy:
+#   kubectl apply -f k8s/pvc.yaml
+#
+# Notes:
+#   - storageClassName "standard" works on GKE / kind / most clouds.
+#     For AWS EKS use "gp2" or "gp3"; for AKS use "managed-premium".
+#   - accessMode ReadWriteMany requires a shared filesystem (NFS, GCS Fuse,
+#     EFS, Azure Files). If you only have block storage, use ReadWriteOnce
+#     and mount the same PVC on a single node, or use a NFS provisioner.
+# =============================================================================
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: resnet-data-pvc
+  namespace: kubeflow
+spec:
+  accessModes:
+    - ReadWriteMany     # all 4 pods read the same dataset concurrently
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: resnet-checkpoints-pvc
+  namespace: kubeflow
+spec:
+  accessModes:
+    - ReadWriteMany     # rank-0 writes; others can read for resume
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: standard
