@@ -81,10 +81,10 @@ def setup():
         flush=True,
     )
 
-    dist.init_process_group(backend="nccl")   # NCCL = Ring AllReduce under the hood
-
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
+    device_id = torch.device(f"cuda:{local_rank}")
+    dist.init_process_group(backend="nccl", device_id=device_id)   # NCCL = Ring AllReduce under the hood
 
     gpu = torch.cuda.get_device_name(local_rank)
     log_all(f"✔ Connected  GPU={gpu}")
@@ -287,7 +287,7 @@ def main():
     scheduler = optim.lr_scheduler.SequentialLR(optimizer, [warmup, cosine], milestones=[5])
 
     criterion = nn.CrossEntropyLoss().to(device)
-    scaler    = torch.cuda.amp.GradScaler()
+    scaler    = torch.amp.GradScaler('cuda')
 
     # ── Data ──────────────────────────────────────────────────────────────────
     train_loader, val_loader, train_sampler = build_loaders(args)
