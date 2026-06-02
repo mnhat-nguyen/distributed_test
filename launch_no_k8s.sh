@@ -1,86 +1,67 @@
 #!/usr/bin/env bash
 # =============================================================================
-# launch_no_k8s.sh  –  Run 4-node x 1-GPU DDP without Kubernetes
+# launch_no_k8s.sh  —  4 nodes x 1 GPU, Ring AllReduce, no Kubernetes
 #
-# USAGE (run this script on EVERY node):
-#   export MASTER_ADDR=<node-0-ip>
-#   export MASTER_PORT=29500
-#   export NODE_RANK=<0|1|2|3>          # unique per node
-#   bash launch_no_k8s.sh [extra train.py args]
+# Run on EVERY node (all 4 at the same time):
 #
-# Or pass everything inline:
-#   MASTER_ADDR=10.0.0.1 NODE_RANK=0 bash launch_no_k8s.sh
-#   MASTER_ADDR=10.0.0.1 NODE_RANK=1 bash launch_no_k8s.sh   ← on node 1
-#   ...
+#   Node 0:  MASTER_ADDR=192.168.0.11 MASTER_PORT=20011 NODE_RANK=0 bash launch_no_k8s.sh
+#   Node 1:  MASTER_ADDR=192.168.0.11 MASTER_PORT=20011 NODE_RANK=1 bash launch_no_k8s.sh
+#   Node 2:  MASTER_ADDR=192.168.0.11 MASTER_PORT=20011 NODE_RANK=2 bash launch_no_k8s.sh
+#   Node 3:  MASTER_ADDR=192.168.0.11 MASTER_PORT=20011 NODE_RANK=3 bash launch_no_k8s.sh
+#
+# Before running — open ports on ALL nodes:
+#   sudo ufw allow 20011/tcp
+#   sudo ufw allow 20000:21000/tcp
+#   sudo ufw allow 20000:21000/udp
+#   sudo ufw reload
 # =============================================================================
 
 set -euo pipefail
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-MASTER_ADDR="${MASTER_ADDR:-192.168.0.11}"   # IP of node 0 (all nodes must reach it)
-MASTER_PORT="${MASTER_PORT:-29500}"
-NNODES=4                                  # total number of nodes
-NPROC_PER_NODE=1                          # GPUs per node
-NODE_RANK="${NODE_RANK:-0}"               # 0-3, must be unique per node
+# ── Settings (override via env vars) ─────────────────────────────────────────
+MASTER_ADDR="${MASTER_ADDR:-192.168.0.11}"
+MASTER_PORT="${MASTER_PORT:-20011}"
+NODE_RANK="${NODE_RANK:-0}"
+NNODES=4
+NPROC_PER_NODE=1   # 1 GPU per node
 
-# ── Optional: virtualenv / conda activation ───────────────────────────────────
-# source /opt/venv/bin/activate
-# conda activate myenv
+WORK_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV="$WORK_DIR/py-ddp"
 
-# ── Sanity checks ─────────────────────────────────────────────────────────────
-if ! command -v torchrun &>/dev/null; then
-    echo "[ERROR] torchrun not found. Install PyTorch >= 1.10."
-    exit 1
+# ── Ring AllReduce — force NCCL to use Ring algorithm ────────────────────────
+export NCCL_ALGO=Ring          # explicitly use Ring AllReduce
+export NCCL_PROTO=Simple       # Simple protocol — best for large gradient tensors
+export NCCL_DEBUG=WARN         # set to INFO for verbose NCCL connection logs
+export NCCL_IB_DISABLE=0       # set to 1 if no InfiniBand
+export OMP_NUM_THREADS=4
+
+# ── Activate virtualenv ───────────────────────────────────────────────────────
+if [[ -f "$VENV/bin/activate" ]]; then
+    source "$VENV/bin/activate"
 fi
 
-if [[ "${NODE_RANK}" == "0" ]]; then
-    echo "======================================================"
-    echo "  ResNet DDP — 4 nodes x 1 GPU (no Kubernetes)"
-    echo "  MASTER_ADDR : ${MASTER_ADDR}:${MASTER_PORT}"
-    echo "  This node   : rank ${NODE_RANK}"
-    echo "======================================================"
+if [[ "$NODE_RANK" == "0" ]]; then
+    echo "============================================================"
+    echo "  ResNet DDP — Ring AllReduce (no Kubernetes)"
+    echo "  Master   : $MASTER_ADDR:$MASTER_PORT"
+    echo "  Rank     : $NODE_RANK / $((NNODES-1))"
+    echo "  NCCL_ALGO: $NCCL_ALGO"
+    echo "============================================================"
 fi
-
-# ── Launch ────────────────────────────────────────────────────────────────────
-# torchrun handles:
-#   - spawning 1 process per GPU
-#   - setting LOCAL_RANK, RANK, WORLD_SIZE, MASTER_ADDR, MASTER_PORT
-#   - rendezvous via c10d (TCP)
 
 torchrun \
-    --nnodes="${NNODES}" \
-    --nproc_per_node="${NPROC_PER_NODE}" \
-    --node_rank="${NODE_RANK}" \
-    --master_addr="${MASTER_ADDR}" \
-    --master_port="${MASTER_PORT}" \
+    --nnodes=$NNODES \
+    --nproc_per_node=$NPROC_PER_NODE \
+    --node_rank=$NODE_RANK \
+    --master_addr=$MASTER_ADDR \
+    --master_port=$MASTER_PORT \
     --rdzv_backend=c10d \
-    --rdzv_endpoint="${MASTER_ADDR}:${MASTER_PORT}" \
-    train.py \
+    --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
+    "$WORK_DIR/train.py" \
         --arch        resnet50 \
         --epochs      90 \
         --batch_size  64 \
         --lr          0.1 \
-        --data_dir    ./data \
-        --output_dir  ./checkpoints \
-        "$@"          # pass any extra args from CLI
-
-# =============================================================================
-# QUICK-START CHEAT SHEET
-#
-# 1. Copy train.py + this script to ALL 4 nodes (same path).
-#
-# 2. Ensure nodes can reach each other:
-#      ping <MASTER_ADDR>
-#      nc -zv <MASTER_ADDR> 20011    # port must be open
-#
-# 3. On each node, set NODE_RANK and run:
-#      Node 0:  MASTER_ADDR=192.168.0.11 NODE_RANK=0 bash launch_no_k8s.sh
-#      Node 1:  MASTER_ADDR=192.168.0.11 NODE_RANK=1 bash launch_no_k8s.sh
-#      Node 2:  MASTER_ADDR=192.168.0.11 NODE_RANK=2 bash launch_no_k8s.sh
-#      Node 3:  MASTER_ADDR=192.168.0.11 NODE_RANK=3 bash launch_no_k8s.sh
-#
-# 4. Training starts once ALL nodes have connected to the rendezvous.
-#
-# RESUME from checkpoint:
-#      NODE_RANK=0 bash launch_no_k8s.sh --resume ./checkpoints/checkpoint_epoch50.pt
-# =============================================================================
+        --data_dir    "$WORK_DIR/data" \
+        --output_dir  "$WORK_DIR/checkpoints" \
+        "$@"

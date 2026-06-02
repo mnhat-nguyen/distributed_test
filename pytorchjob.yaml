@@ -1,65 +1,37 @@
 # =============================================================================
-# k8s/pytorchjob.yaml
+# k8s/pytorchjob.yaml  —  4 nodes x 1 GPU, Ring AllReduce
 #
-# Deploys a 4-node x 1-GPU DDP training job using the Kubeflow Training Operator.
-#
-# Prerequisites:
+# Requires: Kubeflow Training Operator
 #   kubectl apply -k "github.com/kubeflow/training-operator/manifests/overlays/standalone"
 #
-# Deploy:
-#   kubectl apply -f k8s/pytorchjob.yaml
-#
-# Monitor:
-#   kubectl get pytorchjob resnet-ddp-job -n kubeflow
-#   kubectl logs -n kubeflow -l job-name=resnet-ddp-job,rank=0 -f
-#
-# Delete:
-#   kubectl delete -f k8s/pytorchjob.yaml
+# Deploy:   kubectl apply -f k8s/pytorchjob.yaml
+# Monitor:  kubectl logs -n kubeflow -l job-name=resnet-ring-ddp -c pytorch -f
+# Delete:   kubectl delete -f k8s/pytorchjob.yaml
 # =============================================================================
 
 apiVersion: kubeflow.org/v1
 kind: PyTorchJob
 metadata:
-  name: resnet-ddp-job
+  name: resnet-ring-ddp
   namespace: kubeflow
-  labels:
-    app: resnet-ddp
 spec:
-  # ── Failure / restart policy ──────────────────────────────────────────────
-  # OnFailure: restart the job if any worker fails.
-  # Change to Never for debugging (keeps pods alive to inspect logs).
   pytorchReplicaSpecs:
 
-    # ── Master (rank 0) ─────────────────────────────────────────────────────
-    # The Training Operator treats the "Master" replica as rank 0 and injects
-    # MASTER_ADDR / MASTER_PORT automatically into all pods.
+    # ── Master (rank 0) ───────────────────────────────────────────────────────
     Master:
       replicas: 1
       restartPolicy: OnFailure
       template:
-        metadata:
-          labels:
-            app: resnet-ddp
-            role: master
         spec:
-          # ── Node affinity (optional): pin to GPU nodes ──────────────────
-          # nodeSelector:
-          #   accelerator: nvidia-tesla-v100
-
           containers:
             - name: pytorch
-              # Replace with your own image that has PyTorch + torchvision installed
-              image: pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+              image: my-registry/resnet-ring-ddp:latest   # ← replace with your image
               imagePullPolicy: IfNotPresent
-
-              # torchrun is the recommended launcher; the Training Operator sets
-              # RANK, WORLD_SIZE, MASTER_ADDR, MASTER_PORT automatically.
               command:
                 - torchrun
                 - "--nnodes=4"
                 - "--nproc_per_node=1"
                 - "--rdzv_backend=c10d"
-                # $MASTER_ADDR and $MASTER_PORT come from the operator via env vars
                 - "--rdzv_endpoint=$(MASTER_ADDR):$(MASTER_PORT)"
                 - "train.py"
                 - "--arch=resnet50"
@@ -68,20 +40,20 @@ spec:
                 - "--lr=0.1"
                 - "--data_dir=/data"
                 - "--output_dir=/checkpoints"
-
               env:
-                # The operator injects MASTER_ADDR & MASTER_PORT automatically.
-                # You can override MASTER_PORT if needed:
                 - name: MASTER_PORT
-                  value: "29500"
-                # NCCL tuning
+                  value: "20011"
+                # ── Ring AllReduce settings ──────────────────────────────────
+                - name: NCCL_ALGO
+                  value: "Ring"         # force Ring AllReduce
+                - name: NCCL_PROTO
+                  value: "Simple"       # best protocol for large gradients
                 - name: NCCL_DEBUG
-                  value: "INFO"
+                  value: "WARN"         # INFO for verbose logs
                 - name: NCCL_IB_DISABLE
-                  value: "0"           # set "1" if InfiniBand is not available
+                  value: "0"            # set "1" if no InfiniBand
                 - name: OMP_NUM_THREADS
                   value: "4"
-
               resources:
                 requests:
                   cpu: "4"
@@ -91,43 +63,35 @@ spec:
                   cpu: "8"
                   memory: "32Gi"
                   nvidia.com/gpu: "1"
-
               volumeMounts:
-                - name: data-volume
+                - name: data
                   mountPath: /data
-                - name: checkpoint-volume
+                - name: checkpoints
                   mountPath: /checkpoints
-                - name: shm                    # shared memory for DataLoader workers
+                - name: shm
                   mountPath: /dev/shm
-
           volumes:
-            - name: data-volume
-              # Replace with your actual data PVC
+            - name: data
               persistentVolumeClaim:
                 claimName: resnet-data-pvc
-            - name: checkpoint-volume
+            - name: checkpoints
               persistentVolumeClaim:
-                claimName: resnet-checkpoints-pvc
+                claimName: resnet-ckpt-pvc
             - name: shm
               emptyDir:
                 medium: Memory
                 sizeLimit: 8Gi
 
-    # ── Workers (ranks 1-3) ──────────────────────────────────────────────────
+    # ── Workers (ranks 1-3) ───────────────────────────────────────────────────
     Worker:
-      replicas: 3      # Master + 3 Workers = 4 total = world_size 4
+      replicas: 3
       restartPolicy: OnFailure
       template:
-        metadata:
-          labels:
-            app: resnet-ddp
-            role: worker
         spec:
           containers:
             - name: pytorch
-              image: pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
+              image: my-registry/resnet-ring-ddp:latest
               imagePullPolicy: IfNotPresent
-
               command:
                 - torchrun
                 - "--nnodes=4"
@@ -141,17 +105,19 @@ spec:
                 - "--lr=0.1"
                 - "--data_dir=/data"
                 - "--output_dir=/checkpoints"
-
               env:
                 - name: MASTER_PORT
-                  value: "29500"
+                  value: "20011"
+                - name: NCCL_ALGO
+                  value: "Ring"
+                - name: NCCL_PROTO
+                  value: "Simple"
                 - name: NCCL_DEBUG
-                  value: "INFO"
+                  value: "WARN"
                 - name: NCCL_IB_DISABLE
                   value: "0"
                 - name: OMP_NUM_THREADS
                   value: "4"
-
               resources:
                 requests:
                   cpu: "4"
@@ -161,22 +127,20 @@ spec:
                   cpu: "8"
                   memory: "32Gi"
                   nvidia.com/gpu: "1"
-
               volumeMounts:
-                - name: data-volume
+                - name: data
                   mountPath: /data
-                - name: checkpoint-volume
+                - name: checkpoints
                   mountPath: /checkpoints
                 - name: shm
                   mountPath: /dev/shm
-
           volumes:
-            - name: data-volume
+            - name: data
               persistentVolumeClaim:
                 claimName: resnet-data-pvc
-            - name: checkpoint-volume
+            - name: checkpoints
               persistentVolumeClaim:
-                claimName: resnet-checkpoints-pvc
+                claimName: resnet-ckpt-pvc
             - name: shm
               emptyDir:
                 medium: Memory
